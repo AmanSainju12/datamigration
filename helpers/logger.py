@@ -8,7 +8,8 @@ class Logger:
         logging.basicConfig(filename=self.log_filename, level=logging.INFO,
                             format='%(asctime)s - %(levelname)s - %(message)s')
 
-    def write_log(self, message, log_level):
+    @staticmethod
+    def write_log(message, log_level):
         match log_level:
             case "error":
                 logging.error(message)
