@@ -1,8 +1,8 @@
-import time
-from minio.error import S3Error
 from helpers.logger import Logger
-from helpers.utils import get_file_paths, get_object_name, calculate_md5
-from minio_tools.api import create_bucket, object_upload, object_stat, list_object
+from helpers.utils import get_file_paths, calculate_md5, get_object_name
+from minio_tools.api import create_bucket, object_upload, list_object
+from concurrent.futures import ThreadPoolExecutor
+import time
 
 
 class Program:
@@ -25,51 +25,38 @@ class Program:
             obj_list = list(uploaded_object)
             # set current index of the uploaded object list
             self.start_index = len(obj_list) - 1
-            print(self.start_index)
             # check if last uploaded file is corrupted if corrupted set start index with that index
             if calculate_md5(self.file_paths[self.start_index]) == obj_list[self.start_index].etag:
-                start_index = len(list(uploaded_object))
+                self.start_index = len(obj_list)
         except Exception as e:
             Logger.write_log(e, "info")
-            pass
+        is_success = self._parallel_upload_to_s3(self.file_paths, self.bucket_name)
+        return is_success
 
-        # parallel_upload_to_s3(file_paths, bucket_name, directory)
-
-        # remove last path of directory
+    def _parallel_upload_to_s3(self, files, bucket_name):
+        is_success = False
         root_directory = self.directory.replace(self.directory.split("/")[-1], "")
-        print(self.start_index)
         try:
-            # upload the file to storage with listed file_paths
-            for index in range(self.start_index, len(self.file_paths)):
-                path = self.file_paths[index]
-                md5_checksum = calculate_md5(path)  # calculate checksum
-                object_name = get_object_name(path.replace(root_directory, ""))
-                # checking if uploading file is already exist in bucket if exist do not upload
-                is_object_exist = object_stat(self.bucket_name, object_name)
-                if is_object_exist:
-                    Logger.write_log(
-                        f"{object_name} already exist in the storage", "info")
-                else:
-                    object_info = object_upload(path, self.bucket_name, object_name)
-                    # checking if the uploaded file is corrupted write log if corrupted
-                    if object_info["e_tag"] != md5_checksum:
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = []
+                for index in range(self.start_index, len(files)):
+                    file_path = files[index]
+                    md5_checksum = calculate_md5(file_path)
+                    object_key = get_object_name(file_path.replace(root_directory, ""))
+                    futures.append(
+                        {"object_info": executor.submit(object_upload, file_path, bucket_name, object_key),
+                         "hash": md5_checksum})
+                # Wait for all uploads to complete
+                for future in futures:
+                    future["object_info"].result()
+                    if future["object_info"].result()["e_tag"] != future["hash"]:
                         Logger.write_log(
-                            f"{object_info["name"]} is corrupted", "critical")
-                    Logger.write_log(
-                        f"{object_info["name"]} is uploaded successfully", "info")
+                            f"{future["object_info"].result()["name"]} is corrupted", "critical")
             is_success = True
-        except FileNotFoundError as file_not_found:
-            Logger.write_log(
-                f"{file_not_found}", "info")
-            is_success = False
-        except S3Error as s3_error:
-            Logger.write_log(
-                f"{s3_error}", "error")
-            is_success = False
-        except KeyboardInterrupt as keyboard_interrupt:
-            Logger.write_log("Program Terminated", "critical")
+        except KeyboardInterrupt as key_interrupt:
+            Logger.write_log("Program terminated", "error")
             is_success = False
         except Exception as e:
-            Logger.write_log(e, "error")
+            Logger.write_log(f"{e}", "error")
             is_success = False
         return is_success
