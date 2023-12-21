@@ -1,5 +1,6 @@
 from . import client
 from os import path
+from minio.error import S3Error
 
 
 def create_bucket(bucket_name):
@@ -18,8 +19,21 @@ def list_bucket():
         print(f"list_bucket other_error: {e}")
 
 
-def file_upload(local_file_path, bucket_name, file_name):
+def object_upload(local_file_path, bucket_name, file_name):
     result = client.fput_object(bucket_name, file_name, local_file_path)
     object_info = {"path": path.join(result.bucket_name, result.object_name), "e_tag": result.etag,
                    "name": result.object_name, "bucket_name": result.object_name, "last_modified": result.last_modified}
     return object_info
+
+
+def object_stat(bucket_name, object_key):
+    try:
+        client.stat_object(bucket_name, object_key)
+        return True
+    except S3Error as s3_error:
+        return False
+
+
+def list_object(bucket_name, prefix=None):
+    result = client.list_objects(bucket_name, prefix, recursive=True)
+    return result
